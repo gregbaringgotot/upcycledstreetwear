@@ -4,6 +4,7 @@ import {
   getDocs, 
   doc, 
   updateDoc, 
+  deleteDoc,
   query, 
   where,
   orderBy,
@@ -24,7 +25,8 @@ import {
   Edit,
   X,
   Send,
-  Package
+  Package,
+  Trash
 } from 'lucide-react';
 
 const CustomerManagement = () => {
@@ -45,6 +47,8 @@ const CustomerManagement = () => {
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [modalMessage, setModalMessage] = useState('');
   const [modalTitle, setModalTitle] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingCustomer, setDeletingCustomer] = useState(null);
 
   useEffect(() => {
     fetchCustomers();
@@ -55,35 +59,50 @@ const CustomerManagement = () => {
       setLoading(true);
       setError(null);
       
-      console.log('Attempting to fetch customers from Firebase...');
+      console.log('Attempting to fetch users from Firebase...');
       
       // Check if db is properly initialized
       if (!db) {
         throw new Error('Firebase database not initialized');
       }
       
-      // Fetch from Firebase
-      const customersRef = collection(db, 'customers');
-      console.log('Customers collection reference created');
+      // Fetch from users collection instead of customers
+      const usersRef = collection(db, 'users');
+      console.log('Users collection reference created');
       
-      const customersSnapshot = await getDocs(customersRef);
-      console.log('Firebase response received:', customersSnapshot);
+      const usersSnapshot = await getDocs(usersRef);
+      console.log('Firebase response received:', usersSnapshot);
       
-      if (!customersSnapshot.empty) {
-        const customersData = customersSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        console.log('Customers fetched from Firebase:', customersData);
-        setCustomers(customersData);
+      if (!usersSnapshot.empty) {
+        const usersData = usersSnapshot.docs.map(doc => {
+          const userData = doc.data();
+          return {
+            id: doc.id,
+            name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'Unknown User',
+            email: userData.email || 'No email',
+            phone: userData.phone || userData.contactNumber || 'No phone',
+            address: userData.location || 'No address',
+            status: 'active', // Default status since users collection might not have this
+            totalOrders: 0, // Default values - you might want to calculate these
+            totalSpent: 0,
+            lastOrder: 'Never',
+            preferences: ['Streetwear'], // Default preferences
+            createdAt: userData.createdAt,
+            updatedAt: userData.updatedAt,
+            photoURL: userData.photoURL || '',
+            uid: userData.uid || doc.id
+          };
+        });
+        console.log('Users fetched from Firebase:', usersData);
+        setCustomers(usersData);
       } else {
-        console.log('No customers found in Firebase');
+        console.log('No users found in Firebase');
         setCustomers([]);
-        setError('No customers found in database.');
+        setError('No users found in database.');
       }
     } catch (error) {
-      console.error('Error fetching customers:', error);
-      setError(`Failed to load customers from Firebase: ${error.message}`);
+      console.error('Error fetching users:', error);
+      setError(`Failed to load users from Firebase: ${error.message}`);
       setCustomers([]);
     } finally {
       setLoading(false);
@@ -92,16 +111,16 @@ const CustomerManagement = () => {
 
   const getCustomerOrders = async (customerId) => {
     try {
-      console.log('Fetching orders for customer:', customerId);
+      console.log('Fetching orders for user:', customerId);
       
       // Check if db is properly initialized
       if (!db) {
         throw new Error('Firebase database not initialized');
       }
       
-      // Fetch from Firebase
+      // Fetch from Firebase - you might need to adjust this based on your orders structure
       const ordersRef = collection(db, 'orders');
-      const q = query(ordersRef, where('customerId', '==', customerId));
+      const q = query(ordersRef, where('userId', '==', customerId)); // Changed from customerId to userId
       const ordersSnapshot = await getDocs(q);
       
       if (!ordersSnapshot.empty) {
@@ -193,16 +212,24 @@ const CustomerManagement = () => {
   const handleSaveEdit = async () => {
     if (editingCustomer) {
       try {
-        console.log('Updating customer in Firebase:', editingCustomer.id);
-        const customerRef = doc(db, 'customers', editingCustomer.id);
-        await updateDoc(customerRef, {
-          name: editingCustomer.name,
+        console.log('Updating user in Firebase:', editingCustomer.id);
+        const userRef = doc(db, 'users', editingCustomer.id);
+        
+        // Split name back to firstName and lastName
+        const nameParts = editingCustomer.name.trim().split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        
+        await updateDoc(userRef, {
+          firstName: firstName,
+          lastName: lastName,
           email: editingCustomer.email,
           phone: editingCustomer.phone,
-          address: editingCustomer.address,
-          status: editingCustomer.status
+          contactNumber: editingCustomer.phone, // Update both phone fields if they exist
+          location: editingCustomer.address,
+          updatedAt: new Date().toISOString()
         });
-        console.log('Customer updated in Firebase successfully');
+        console.log('User updated in Firebase successfully');
         
         // Update local state
         setCustomers(prev => prev.map(c => 
@@ -212,12 +239,12 @@ const CustomerManagement = () => {
         setShowEditModal(false);
         setEditingCustomer(null);
         setModalTitle('Success');
-        setModalMessage('Customer profile updated successfully!');
+        setModalMessage('User profile updated successfully!');
         setShowSuccessModal(true);
       } catch (error) {
-        console.error('Error updating customer:', error);
+        console.error('Error updating user:', error);
         setModalTitle('Error');
-        setModalMessage(`Failed to update customer: ${error.message}`);
+        setModalMessage(`Failed to update user: ${error.message}`);
         setShowErrorModal(true);
       }
     }
@@ -252,6 +279,41 @@ const CustomerManagement = () => {
     );
   }
 
+const handleDeleteCustomer = async () => {
+  if (deletingCustomer) {
+    try {
+      console.log('Deleting user from Firebase:', deletingCustomer.id);
+      const userRef = doc(db, 'users', deletingCustomer.id);
+      
+      await deleteDoc(userRef);
+      console.log('User deleted from Firebase successfully');
+      
+      // Update local state - remove the deleted customer
+      setCustomers(prev => prev.filter(c => c.id !== deletingCustomer.id));
+      
+      // Close modals and reset state
+      setShowDeleteModal(false);
+      setDeletingCustomer(null);
+      setShowCustomerModal(false); // Close detail modal if open
+      
+      // Show success message
+      setModalTitle('Success');
+      setModalMessage(`User "${deletingCustomer.name}" has been deleted successfully!`);
+      setShowSuccessModal(true);
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      setModalTitle('Error');
+      setModalMessage(`Failed to delete user: ${error.message}`);
+      setShowErrorModal(true);
+    }
+  }
+};
+
+const confirmDeleteCustomer = (customer) => {
+  setDeletingCustomer(customer);
+  setShowDeleteModal(true);
+};
+
   return (
     <div className="p-8">
       {error && (
@@ -270,8 +332,8 @@ const CustomerManagement = () => {
       
       <div className="mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-secondary mb-2">Customer Management</h1>
-          <p className="text-gray-600">Manage your customer profiles and track their activity</p>
+          <h1 className="text-3xl font-bold text-secondary mb-2">User Management</h1>
+          <p className="text-gray-600">Manage your user profiles and track their activity</p>
         </div>
       </div>
 
@@ -282,7 +344,7 @@ const CustomerManagement = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
             <input
               type="text"
-              placeholder="Search customers..."
+              placeholder="Search users..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="input-field pl-10"
@@ -293,7 +355,7 @@ const CustomerManagement = () => {
             onChange={(e) => setFilterStatus(e.target.value)}
             className="input-field md:w-48"
           >
-            <option value="all">All Customers</option>
+            <option value="all">All Users</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
             <option value="new">New</option>
@@ -306,7 +368,7 @@ const CustomerManagement = () => {
         <div className="card">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Customers</p>
+              <p className="text-sm font-medium text-gray-600">Total Users</p>
               <p className="text-2xl font-bold text-secondary">{customers.length}</p>
             </div>
             <div className="bg-blue-100 p-3 rounded-full">
@@ -318,7 +380,7 @@ const CustomerManagement = () => {
         <div className="card">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Active Customers</p>
+              <p className="text-sm font-medium text-gray-600">Active Users</p>
               <p className="text-2xl font-bold text-secondary">
                 {customers.filter(c => c.status === 'active').length}
               </p>
@@ -348,7 +410,7 @@ const CustomerManagement = () => {
             <div>
               <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
               <p className="text-2xl font-bold text-secondary">
-                {formatPrice(Math.round(customers.reduce((sum, c) => sum + c.totalSpent, 0) / customers.length))}
+                {customers.length > 0 ? formatPrice(Math.round(customers.reduce((sum, c) => sum + c.totalSpent, 0) / customers.length)) : formatPrice(0)}
               </p>
             </div>
             <div className="bg-orange-100 p-3 rounded-full">
@@ -367,9 +429,17 @@ const CustomerManagement = () => {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-3">
                   <div className="w-12 h-12 bg-primary-light rounded-full flex items-center justify-center">
-                    <span className="text-primary font-semibold text-lg">
-                      {customer.name.split(' ').map(n => n[0]).join('')}
-                    </span>
+                    {customer.photoURL ? (
+                      <img 
+                        src={customer.photoURL} 
+                        alt={customer.name}
+                        className="w-12 h-12 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-primary font-semibold text-lg">
+                        {customer.name.split(' ').map(n => n[0]).join('')}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <h3 className="font-semibold text-secondary">{customer.name}</h3>
@@ -449,7 +519,7 @@ const CustomerManagement = () => {
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6 border-b border-gray-200 pb-4">
-                <h2 className="text-xl font-semibold text-secondary">Customer Details</h2>
+                <h2 className="text-xl font-semibold text-secondary">User Details</h2>
                 <button
                   onClick={() => setShowCustomerModal(false)}
                   className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -462,9 +532,17 @@ const CustomerManagement = () => {
                 {/* Customer Info */}
                 <div className="flex items-center space-x-4">
                   <div className="w-16 h-16 bg-primary-light rounded-full flex items-center justify-center">
-                    <span className="text-primary font-semibold text-xl">
-                      {selectedCustomer.name.split(' ').map(n => n[0]).join('')}
-                    </span>
+                    {selectedCustomer.photoURL ? (
+                      <img 
+                        src={selectedCustomer.photoURL} 
+                        alt={selectedCustomer.name}
+                        className="w-16 h-16 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-primary font-semibold text-xl">
+                        {selectedCustomer.name.split(' ').map(n => n[0]).join('')}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-secondary">{selectedCustomer.name}</h3>
@@ -541,6 +619,13 @@ const CustomerManagement = () => {
                     <Edit className="h-4 w-4" />
                     <span>Edit Profile</span>
                   </button>
+                  <button 
+                      onClick={() => confirmDeleteCustomer(selectedCustomer)}
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center space-x-2"
+                    >
+                      <Trash className="h-4 w-4" />
+                      <span>Delete</span>
+                    </button>
                 </div>
               </div>
             </div>
@@ -566,23 +651,30 @@ const CustomerManagement = () => {
               </div>
               
               <div className="space-y-4">
-                {customerOrders.map((order) => (
-                  <div key={order.id} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-semibold text-secondary">{order.product}</h4>
-                        <p className="text-sm text-gray-600">Order #{order.id}</p>
-                        <p className="text-sm text-gray-600">Date: {order.date}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-primary">{formatPrice(order.price)}</p>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getOrderStatusColor(order.status)}`}>
-                          {order.status.toUpperCase()}
-                        </span>
+                {customerOrders.length > 0 ? (
+                  customerOrders.map((order) => (
+                    <div key={order.id} className="border border-gray-200 rounded-lg p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-semibold text-secondary">{order.product || 'Product Name'}</h4>
+                          <p className="text-sm text-gray-600">Order #{order.id}</p>
+                          <p className="text-sm text-gray-600">Date: {order.date || 'Unknown'}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold text-primary">{formatPrice(order.price || 0)}</p>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getOrderStatusColor(order.status || 'pending')}`}>
+                            {(order.status || 'pending').toUpperCase()}
+                          </span>
+                        </div>
                       </div>
                     </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8">
+                    <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600">No orders found for this user</p>
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
@@ -595,7 +687,7 @@ const CustomerManagement = () => {
           <div className="bg-white rounded-lg max-w-2xl w-full shadow-xl">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6 border-b border-gray-200 pb-4">
-                <h2 className="text-xl font-semibold text-secondary">Edit Customer Profile</h2>
+                <h2 className="text-xl font-semibold text-secondary">Edit User Profile</h2>
                 <button
                   onClick={() => setShowEditModal(false)}
                   className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -809,6 +901,48 @@ const CustomerManagement = () => {
           </div>
         </div>
       )}
+
+        {/* Delete Confirmation Modal */}
+            {showDeleteModal && deletingCustomer && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-lg max-w-md w-full">
+                  <div className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-semibold text-red-600">Confirm Delete</h2>
+                      <button
+                        onClick={() => setShowDeleteModal(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                    
+                    <div className="mb-6">
+                      <p className="text-gray-700">
+                        Are you sure you want to delete user <strong>"{deletingCustomer.name}"</strong>? 
+                        This action cannot be undone.
+                      </p>
+                    </div>
+                    
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={() => setShowDeleteModal(false)}
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleDeleteCustomer}
+                        className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center space-x-2"
+                      >
+                        <Trash className="h-4 w-4" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
     </div>
   );
 };
